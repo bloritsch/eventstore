@@ -93,7 +93,7 @@ func (b *BadgerEventStore) Append(aggregate string, content interface{}) error {
 	}
 
 	// FIXME: This shouldn't be necessary, but writes in rapid succession can fail otherwise. (i.e. in unit tests)
-	time.Sleep(1 * time.Millisecond)
+	// time.Sleep(1 * time.Millisecond)
 
 	return nil
 }
