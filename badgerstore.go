@@ -19,11 +19,9 @@ package eventstore
 import (
 	"bytes"
 	"encoding/gob"
-	"encoding/json"
 	"fmt"
 	"github.com/dgraph-io/badger/v3"
 	"github.com/oklog/ulid/v2"
-	"reflect"
 	"time"
 )
 
@@ -33,21 +31,18 @@ type BadgerEventStore struct {
 	EncryptionKey              []byte
 	EncryptionRotationDuration time.Duration
 	db                         *badger.DB
-	typeRegistery              map[string]reflect.Type
 }
 
 type Record struct {
 	Id        ulid.ULID
 	Timestamp time.Time
-	Type      string
-	Content   []byte
+	Content   interface{}
 }
 
 func MemoryStore() EventStore {
 	return &BadgerEventStore{
-		MemoryOnly:    true,
-		RootDir:       "",
-		typeRegistery: make(map[string]reflect.Type),
+		MemoryOnly: true,
+		RootDir:    "",
 	}
 }
 
@@ -57,7 +52,6 @@ func FileStore(path string, key []byte, rotationDur time.Duration) EventStore {
 		MemoryOnly:                 false,
 		EncryptionKey:              key,
 		EncryptionRotationDuration: rotationDur,
-		typeRegistery:              make(map[string]reflect.Type),
 	}
 }
 
@@ -75,6 +69,7 @@ func (b *BadgerEventStore) kvstore() (*badger.DB, error) {
 		opts = opts.WithIndexCacheSize(100 << 20) // 100 mb
 	}
 
+	b.Register(Record{})
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, err
@@ -90,16 +85,11 @@ func (b *BadgerEventStore) Append(aggregate string, content interface{}) error {
 	record := Record{
 		Id:        NewId(now),
 		Timestamp: now,
-		Type:      typeName(content),
+		Content:   content,
 	}
 
 	var c bytes.Buffer
 	enc := gob.NewEncoder(&c)
-	if err := enc.Encode(&content); err != nil {
-		return err
-	}
-
-	record.Content = c.Bytes()
 
 	k, err := record.Id.MarshalText()
 	if err != nil {
@@ -107,10 +97,12 @@ func (b *BadgerEventStore) Append(aggregate string, content interface{}) error {
 	}
 
 	key := []byte(fmt.Sprintf("%s:%s", aggregate, k))
-	value, err := json.Marshal(record)
+	err = enc.Encode(record)
 	if err != nil {
 		return err
 	}
+
+	value := c.Bytes()
 
 	db, err := b.kvstore()
 	if err != nil {
@@ -124,23 +116,13 @@ func (b *BadgerEventStore) Append(aggregate string, content interface{}) error {
 	}
 
 	// FIXME: This shouldn't be necessary, but writes in rapid succession can fail otherwise. (i.e. in unit tests)
-	// time.Sleep(1 * time.Millisecond)
+	//time.Sleep(1 * time.Millisecond)
 
 	return nil
 }
 
 func (b *BadgerEventStore) Register(t interface{}) {
 	gob.Register(t)
-	name := typeName(t)
-	b.typeRegistery[name] = reflect.TypeOf(t)
-}
-
-func typeName(t interface{}) string {
-	return fmt.Sprintf("%T", t)
-}
-
-func (b *BadgerEventStore) makeInstance(name string) interface{} {
-	return reflect.New(b.typeRegistery[name]).Elem().Interface()
 }
 
 func (b *BadgerEventStore) Read(aggregate string) ([]interface{}, error) {
@@ -162,19 +144,14 @@ func (b *BadgerEventStore) Read(aggregate string) ([]interface{}, error) {
 			item := it.Item()
 
 			err := item.Value(func(val []byte) error {
-				var record Record
-				if err = json.Unmarshal(val, &record); err != nil {
-					return err
-				}
-
-				c := bytes.NewReader(record.Content)
+				c := bytes.NewBuffer(val)
 				dec := gob.NewDecoder(c)
-				v := b.makeInstance(record.Type)
-				if err = dec.Decode(&v); err != nil {
+				var record Record
+				if err = dec.Decode(&record); err != nil {
 					return err
 				}
 
-				values = append(values, v)
+				values = append(values, record.Content)
 				return nil
 			})
 
