@@ -26,11 +26,7 @@ import (
 )
 
 type BadgerEventStore struct {
-	RootDir                    string
-	MemoryOnly                 bool
-	EncryptionKey              []byte
-	EncryptionRotationDuration time.Duration
-	db                         *badger.DB
+	db *badger.DB
 }
 
 type Record struct {
@@ -40,19 +36,7 @@ type Record struct {
 }
 
 func MemoryStore() EventStore {
-	return &BadgerEventStore{
-		MemoryOnly: true,
-		RootDir:    "",
-	}
-}
-
-func FileStore(path string, key []byte, rotationDur time.Duration) EventStore {
-	return &BadgerEventStore{
-		RootDir:                    path,
-		MemoryOnly:                 false,
-		EncryptionKey:              key,
-		EncryptionRotationDuration: rotationDur,
-	}
+	return &BadgerEventStore{}
 }
 
 func (b *BadgerEventStore) kvstore() (*badger.DB, error) {
@@ -60,14 +44,7 @@ func (b *BadgerEventStore) kvstore() (*badger.DB, error) {
 		return b.db, nil
 	}
 
-	opts := badger.DefaultOptions(b.RootDir).WithInMemory(b.MemoryOnly)
-
-	if b.EncryptionKey != nil && len(b.EncryptionKey) >= 128 {
-		opts = opts.WithEncryptionKey(b.EncryptionKey)
-		opts = opts.WithEncryptionKeyRotationDuration(b.EncryptionRotationDuration)
-		// May need to tune this.. data store shouldn't get too big
-		opts = opts.WithIndexCacheSize(100 << 20) // 100 mb
-	}
+	opts := badger.DefaultOptions("").WithInMemory(true)
 
 	b.Register(Record{})
 	db, err := badger.Open(opts)
@@ -116,7 +93,7 @@ func (b *BadgerEventStore) Append(aggregate string, content interface{}) error {
 	}
 
 	// FIXME: This shouldn't be necessary, but writes in rapid succession can fail otherwise. (i.e. in unit tests)
-	//time.Sleep(1 * time.Millisecond)
+	time.Sleep(1 * time.Millisecond)
 
 	return nil
 }
