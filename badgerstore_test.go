@@ -17,13 +17,18 @@
 package eventstore
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
 
 func TestBadgerEventStore_Append(t *testing.T) {
 	store := MemoryStore()
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	store.Register(Test{})
 	fact := "test.1"
 	content := Test{Value: 1}
@@ -103,5 +108,14 @@ func TestBadgerEventStore_AppendWithMultipleFacts(t *testing.T) {
 	if len(results2) != 9 {
 		t.Error(store.ListKeysForAggregate(fact2))
 		t.Errorf("Incorrect number of events: %d", len(results2))
+	}
+
+	keys, err := store.ListKeys()
+	if err != nil {
+		t.Error(err)
+	}
+
+	for _, k := range keys {
+		fmt.Println(k)
 	}
 }
